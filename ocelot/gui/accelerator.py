@@ -271,8 +271,9 @@ def elem_cord(lat):
 
 dict_plot = {Quadrupole: {"scale": 0.7, "color": "r",            "edgecolor": "r",          "label": "quad"},
              Sextupole:  {"scale": 0.5, "color": "g",            "edgecolor": "g",          "label": "sext"},
-             Octupole:   {"scale": 0.5, "color": "g",            "edgecolor": "g",          "label": "sext"},
+             Octupole:   {"scale": 0.5, "color": "g",            "edgecolor": "g",          "label": "oct"},
              Cavity:     {"scale": 0.7, "color": "orange",       "edgecolor": "lightgreen", "label": "cav"},
+             TWCavity:   {"scale": 0.7, "color": "orange",       "edgecolor": "lightgreen", "label": "twcav"},
              Bend:       {"scale": 0.7, "color": "lightskyblue", "edgecolor": "k",          "label": "bend"},
              RBend:      {"scale": 0.7, "color": "lightskyblue", "edgecolor": "k",          "label": "bend"},
              SBend:      {"scale": 0.7, "color": "lightskyblue", "edgecolor": "k",          "label": "bend"},
@@ -292,10 +293,14 @@ dict_plot = {Quadrupole: {"scale": 0.7, "color": "r",            "edgecolor": "r
              }
 
 
-def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, legend=True):
+def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, legend=True, font_size=18, excld_legend=None):
+    if excld_legend is None:
+        excld_legend = []
+
     dict_copy=deepcopy(dict_plot)
     alpha = 1
     ax.set_ylim((-1, 1.5))
+    ax.tick_params(axis='both', labelsize=font_size)
     if y_lim != None:
         ax.set_ylim(y_lim)
     points_with_annotation = []
@@ -318,16 +323,17 @@ def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, leg
             s.append(elem.k2)
         elif elem.__class__ == Undulator:
             u.append(elem.Kx + elem.Ky)
-        elif elem.__class__ == Cavity:
-            rf.append(elem.v )
+        elif elem.__class__ in [Cavity, TWCavity, TDCavity]:
+            rf.append(elem.v)
         elif elem.__class__ == Multipole:
             m.append(sum(np.abs(elem.kn)))
-    q_max = np.max(np.abs(q)) if len(q) !=0 else 0
-    b_max = np.max(np.abs(b)) if len(b) !=0 else 0
-    s_max = np.max(np.abs(s)) if len(s) !=0 else 0
-    c_max = np.max(np.abs(c)) if len(c) !=0 else 0
-    u_max = np.max(np.abs(u)) if len(u) !=0 else 0
-    rf_max = np.max(np.abs(rf)) if len(rf) !=0 else 0
+
+    q_max = np.max(np.abs(q)) if len(q) != 0 else 0
+    b_max = np.max(np.abs(b)) if len(b) != 0 else 0
+    s_max = np.max(np.abs(s)) if len(s) != 0 else 0
+    c_max = np.max(np.abs(c)) if len(c) != 0 else 0
+    u_max = np.max(np.abs(u)) if len(u) != 0 else 0
+    rf_max = np.max(np.abs(rf)) if len(rf) != 0 else 0
     m_max = np.max(m) if len(m) !=0 else 0
     ncols = np.sign(len(q)) + np.sign(len(b)) + np.sign(len(s)) + np.sign(len(c)) + np.sign(len(u)) + np.sign(len(rf))+ np.sign(len(m))
 
@@ -335,6 +341,10 @@ def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, leg
     for elem in dict_copy.keys():
         labels_dict[elem] = dict_copy[elem]["label"]
     for elem in lat.sequence:
+        if elem.__class__ in excld_legend:
+            L += elem.l
+            continue
+
         if elem.__class__ in [Marker, Edge]:
             L += elem.l
             continue
@@ -348,59 +358,61 @@ def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, leg
         ecolor = dict_copy[elem.__class__]["edgecolor"]
         ampl = 1
         s_coord = np.array([L + elem.l/2. - l/2., L + elem.l/2. - l/2., L + elem.l/2. +l/2., L + elem.l/2. +l/2., L + elem.l/2.- l/2.]) + s_point
+
+        rect = np.array([-1, 1, 1, -1, -1])
+
         if elem.__class__ == Quadrupole:
             ampl = elem.k1/q_max if q_max != 0 else 1
-            point, = ax.fill(s_coord,  (np.array([-1, 1, 1, -1, -1]) + 1)*ampl*scale*y_scale, color, edgecolor=ecolor,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+            point, = ax.fill(s_coord,  (rect + 1)*ampl*scale*y_scale, color, edgecolor=ecolor,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
         elif elem.__class__ in [Bend, RBend, SBend]:
             ampl = elem.angle/b_max if b_max != 0 else 1
-            point, = ax.fill(s_coord, (np.array([-1, 1, 1, -1, -1])+1)*ampl*scale*y_scale, color,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+            point, = ax.fill(s_coord, (rect+1)*ampl*scale*y_scale, color,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
         elif elem.__class__ in [Hcor, Vcor]:
-
             ampl = elem.angle/c_max if c_max != 0 else 0.5
-            #print c_max, elem.angle, ampl
             if elem.angle == 0:
-                ampl=0.5
-                point, = ax.fill(s_coord, (np.array([-1, 1, 1, -1, -1]))*ampl*scale*y_scale, "lightcyan",  edgecolor="k",
-                             alpha = 0.5, label=dict_copy[elem.__class__]["label"])
+                ampl = 0.5
+                point, = ax.fill(s_coord, rect*ampl*scale*y_scale, "lightcyan",  edgecolor="k",
+                             alpha=0.5, label=dict_copy[elem.__class__]["label"])
             else:
-                point, = ax.fill(s_coord, (np.array([-1, 1, 1, -1, -1])+1)*ampl*scale*y_scale, color,  edgecolor=ecolor,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+                point, = ax.fill(s_coord, (rect+1)*ampl*scale*y_scale, color,  edgecolor=ecolor,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[Hcor]["label"] = ""
             dict_copy[Vcor]["label"] = ""
 
         elif elem.__class__ == Sextupole:
-            ampl = (elem.k2)/s_max if s_max != 0 else 1
-            point, = ax.fill(s_coord, (np.array([-1, 1, 1, -1, -1])+1)*ampl*scale*y_scale, color,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+            ampl = elem.k2/s_max if s_max != 0 else 1
+            point, = ax.fill(s_coord, (rect+1)*ampl*scale*y_scale, color,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
-        elif elem.__class__ == Cavity:
-            ampl = 1 # elem.v/rf_max if rf_max != 0 else 0.5
-            point, = ax.fill(s_coord, np.array([-1, 1, 1, -1, -1])*ampl*scale*y_scale, color,
-                             alpha = alpha, edgecolor = "lightgreen", label=dict_copy[elem.__class__]["label"])
+        elif elem.__class__ in [Cavity, TWCavity, TDCavity]:
+            ampl = 1
+            point, = ax.fill(s_coord, rect*ampl*scale*y_scale, color,
+                             alpha=alpha, edgecolor="lightgreen", label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
         elif elem.__class__ == Undulator:
             ampl = elem.Kx/u_max if u_max != 0 else 0.5
-            point, = ax.fill(s_coord, np.array([-1, 1, 1, -1, -1])*ampl*scale*y_scale, color,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+            point, = ax.fill(s_coord, rect*ampl*scale*y_scale, color,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
         elif elem.__class__ == Multipole:
             ampl = sum(elem.kn)/m_max if u_max != 0 else 0.5
-            point, = ax.fill(s_coord, np.array([-1, 1, 1, -1, -1])*ampl*scale*y_scale, color,
-                             alpha = alpha, label=dict_copy[elem.__class__]["label"])
+            point, = ax.fill(s_coord, rect*ampl*scale*y_scale, color,
+                             alpha=alpha, label=dict_copy[elem.__class__]["label"])
             dict_copy[elem.__class__]["label"] = ""
 
         else:
-            point, = ax.fill(s_coord, np.array([-1, 1, 1, -1, -1])*ampl*scale*y_scale, color, edgecolor=ecolor,
-                             alpha = alpha)
+            point, = ax.fill(s_coord, rect*ampl*scale*y_scale, color, edgecolor=ecolor,
+                             alpha=alpha)
+
         annotation = ax.annotate(elem.__class__.__name__+": " + elem.id,
             xy=(L+l/2., 0), #xycoords='data',
             #xytext=(i + 1, i), textcoords='data',
@@ -413,7 +425,7 @@ def new_plot_elems(fig, ax, lat, s_point=0, nturns=1, y_lim=None, y_scale=1, leg
         annotation.set_visible(False)
         L += elem.l
         points_with_annotation.append([point, annotation])
-        ax.set_xlabel("s [m]")
+        ax.set_xlabel("s [m]", fontsize=font_size)
 
     def on_move(event):
         visibility_changed = False
@@ -499,11 +511,11 @@ def plot_disp(ax, tws, top_plot, font_size):
         d_Dx = 1
         ax.set_ylim(( min(Fmin)-d_Dx*0.1, max(Fmax)+d_Dx*0.1))
     if top_plot[0] == "E":
-        top_ylabel = r"$"+"/".join(top_plot) +"$"+ ", GeV"
+        top_ylabel = r"$"+"/".join(top_plot) +"$"+ ", [GeV]"
     elif top_plot[0] in ["mux", 'muy']:
-        top_ylabel = r"$" + "/".join(top_plot) + "$" + ", rad"
+        top_ylabel = r"$" + "/".join(top_plot) + "$" + ", [rad]"
     else:
-        top_ylabel = r"$"+"/".join(top_plot) +"$"+ ", m"
+        top_ylabel = r"$"+"/".join(top_plot) +"$"+ ", [m]"
 
     yticks = ax.get_yticks()
     yticks = yticks[2::2]
@@ -511,8 +523,8 @@ def plot_disp(ax, tws, top_plot, font_size):
     #for i, label in enumerate(ax.get_yticklabels()):
     #    if i == 0 or i == 1:
     #        label.set_visible(False)
-    ax.set_ylabel(top_ylabel)
-
+    ax.set_ylabel(top_ylabel, fontsize=font_size)
+    ax.tick_params(axis='both', labelsize=font_size)
     #ax.plot(S, Dx,'black', lw = 2, label=lable)
     leg2 = ax.legend(loc='upper right', shadow=False, fancybox=True, prop=font_manager.FontProperties(size=font_size))
     leg2.get_frame().set_alpha(0.2)
@@ -521,26 +533,30 @@ def plot_disp(ax, tws, top_plot, font_size):
 
 
 def plot_betas(ax, S, beta_x, beta_y, font_size):
-    ax.set_ylabel(r"$\beta_{x,y}$ [m]")
-    ax.plot(S, beta_x,'b', lw = 2, label=r"$\beta_{x}$")
-    ax.plot(S, beta_y,'r', lw = 2, label=r"$\beta_{y}$")
+    ax.set_ylabel(r"$\beta_{x,y}$ [m]", fontsize=font_size)
+    ax.plot(S, beta_x, 'b', lw=2, label=r"$\beta_{x}$")
+    ax.plot(S, beta_y, 'r', lw=2, label=r"$\beta_{y}$")
+    ax.tick_params(axis='both', labelsize=font_size)
     leg = ax.legend(loc='upper left', shadow=False, fancybox=True, prop=font_manager.FontProperties(size=font_size))
     leg.get_frame().set_alpha(0.2)
 
 
-def plot_opt_func(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=True, font_size=18):
+def plot_opt_func(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=True, font_size=14, excld_legend=None):
     """
     function for plotting: lattice (bottom section), vertical and horizontal beta-functions (middle section),
     other parameters (top section) such as "Dx", "Dy", "E", "mux", "muy", "alpha_x", "alpha_y", "gamma_x", "gamma_y"
-    lat - MagneticLattice,
-    tws - list if Twiss objects,
-    top_plot=["Dx"] - parameters which displayed in top section. Example top_plot=["Dx", "Dy", "alpha_x"]
-    legend=True - displaying legend of element types in bottom section,
-    fig_name=None - name of figure,
-    grid=True - grid
-    font_size=18 - font size.
+
+    :param lat: MagneticLattice,
+    :param tws: list if Twiss objects,
+    :param top_plot:  ["Dx"] - parameters which displayed in top section. Can be any attribute of Twiss class, e.g. top_plot=["Dx", "Dy", "alpha_x"]
+    :param legend: True - displaying legend of element types in bottom section,
+    :param fig_name: None - name of figure,
+    :param grid: True - grid
+    :param font_size: 16 - font size for any element of plot
+    :param excld_legend: None, exclude type of element from the legend, e.g. excld_legend=[Hcor, Vcor]
+    :return:
     """
-    if fig_name == None:
+    if fig_name is None:
         fig = plt.figure()
     else:
         fig = plt.figure(fig_name)
@@ -549,9 +565,9 @@ def plot_opt_func(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=Tr
     plt.rc('grid', color='0.75', linestyle='-', linewidth=0.5)
     left, width = 0.1, 0.85
 
-    rect1 = [left, 0.63, width, 0.3]
-    rect2 = [left, 0.18, width, 0.45]
-    rect3 = [left, 0.05, width, 0.13]
+    rect1 = [left, 0.64, width, 0.3]
+    rect2 = [left, 0.19, width, 0.46]
+    rect3 = [left, 0.07, width, 0.12]
 
     ax_top = fig.add_axes(rect1)
     ax_b = fig.add_axes(rect2, sharex=ax_top)  #left, bottom, width, height
@@ -567,10 +583,9 @@ def plot_opt_func(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=Tr
     ax_el.grid(grid)
 
     fig.subplots_adjust(hspace=0)
-    beta_x = [p.beta_x for p in tws] # list(map(lambda p:p.beta_x, tws))
-    beta_y = [p.beta_y for p in tws] #list(map(lambda p:p.beta_y, tws))
-    S = [p.s for p in tws] #list(map(lambda p:p.s, tws))
-    #plt.plot(S, beta_x)
+    beta_x = [p.beta_x for p in tws]
+    beta_y = [p.beta_y for p in tws]
+    S = [p.s for p in tws]
 
     plt.xlim(S[0], S[-1])
 
@@ -578,7 +593,7 @@ def plot_opt_func(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=Tr
 
     plot_betas(ax_b, S, beta_x, beta_y, font_size)
     #plot_elems(ax_el, lat, s_point = S[0], legend = legend, y_scale=0.8) # plot elements
-    new_plot_elems(fig, ax_el, lat, s_point = S[0], legend = legend, y_scale=0.8)
+    new_plot_elems(fig, ax_el, lat, s_point=S[0], legend=legend, y_scale=0.8, font_size=font_size, excld_legend=excld_legend)
 
 
 def plot_opt_func_reduced(lat, tws, top_plot=["Dx"], legend=True, fig_name=None, grid=False, font_size=18):

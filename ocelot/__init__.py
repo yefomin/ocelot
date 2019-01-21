@@ -2,7 +2,7 @@
 general ocelot description
 """
 
-__version__ = '18.11.0'
+__version__ = '18.12.0'
 
 
 __all__ = ['Twiss', 'twiss', "Beam", "Particle", "get_current", "get_envelope",  # beam
@@ -21,7 +21,7 @@ __all__ = ['Twiss', 'twiss', "Beam", "Particle", "get_current", "get_envelope", 
             "spectrum", "track",  # track
            "pi", "m_e_eV", "m_e_MeV", "m_e_GeV",  # globals
            "compensate_chromaticity",  # chromaticity
-           "EbeamParams",  # e_beam_params
+           "EbeamParams",  # beam_params
            "write_lattice",  # io
            "CSR", "SpaceCharge", "Wake", "WakeTable", "WakeKick", "BeamTransform", "SmoothBeam",
            "EmptyProc", "PhysProc", "LaserHeater", "LaserModulator", "SpontanRadEffects", "LSC",
