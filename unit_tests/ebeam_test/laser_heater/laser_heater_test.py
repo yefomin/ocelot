@@ -47,7 +47,7 @@ def test_chicane_trajectory(lattice, p_array, parameter, update_ref_values=False
 
     csr = CSR()
     csr.energy = p_array.E
-
+    #csr.pict_debug = True
     navi.add_physics_proc(csr, lattice.sequence[0], lattice.sequence[-1])
 
     if update_ref_values:
@@ -132,6 +132,7 @@ def test_track_chicane_und_csr(lattice, p_array, parameter, update_ref_values=Fa
     navi.unit_step = 0.05
 
     csr = CSR()
+    #csr.pict_debug = True
     csr.energy = p_array.E
 
     navi.add_physics_proc(csr, lattice.sequence[0], lattice.sequence[-1])
@@ -178,7 +179,7 @@ def test_track_with_laser_heater(lattice, p_array, parameter, update_ref_values=
     lh.step = 2
     lh.dE = 12500e-9  # GeV
     lh.Ku = 1.294  # undulator parameter
-    lh.Lu = 0.8  # [m] - undulator length
+    lh.Lu = 0.74  # [m] - undulator length
     lh.lperiod = 0.074  # [m] - undulator period length
     lh.sigma_l = 30000e-2  # [m]
     lh.sigma_x = 300e-6

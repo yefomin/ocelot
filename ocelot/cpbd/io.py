@@ -7,6 +7,7 @@ author sergey.tomin
 from ocelot.cpbd.elements import *
 import os, sys
 from ocelot.adaptors.astra2ocelot import astraBeam2particleArray, particleArray2astraBeam
+from ocelot.adaptors.csrtrack2ocelot import csrtrackBeam2particleArray, particleArray2csrtrackBeam
 from ocelot.cpbd.beam import ParticleArray, Twiss, Beam
 
 
@@ -30,39 +31,53 @@ def load_particle_array_from_npz(filename, print_params=False):
     return p_array
 
 
-
 def load_particle_array(filename, print_params=False):
     """
-    Universal function to load beam file, *.ast or *.npz format
+    Universal function to load beam file, *.ast (ASTRA), *.fmt1 (CSRTrack) or *.npz format
+
+    Note that downloading ParticleArray from the astra file (.ast) and saving it back does not give the same distribution.
+    The difference arises because the array of particles does not have a reference particle, and in this case
+    the first particle is used as a reference.
 
     :param filename: path to file, filename.ast or filename.npz
     :return: ParticleArray
     """
     name, file_extension = os.path.splitext(filename)
     if file_extension == ".npz":
-        return load_particle_array_from_npz(filename, print_params=print_params)
+        parray = load_particle_array_from_npz(filename, print_params=False)
     elif file_extension in [".ast", ".001"]:
-        return astraBeam2particleArray(filename, s_ref=-1, Eref=-1, print_params=print_params)
+        parray = astraBeam2particleArray(filename, print_params=False)
+    elif file_extension in [".fmt1"]:
+        parray = csrtrackBeam2particleArray(filename)
     else:
-        raise Exception("Unknown format of the beam file: " + file_extension + " but must be *.ast or *.npz ")
+        raise Exception("Unknown format of the beam file: " + file_extension + " but must be *.ast, *fmt1 or *.npz ")
+
+    if print_params:
+        print(parray)
+
+    return parray
 
 
-def save_particle_array(filename, p_array, ref_index=0):
+def save_particle_array(filename, p_array):
     """
-    Universal function to save beam file, *.ast or *.npz format
+    Universal function to save beam file, *.ast (ASTRA), *.fmt1 (CSRTrack) or *.npz format
+
+    Note that downloading ParticleArray from the astra file (.ast) and saving it back does not give the same distribution.
+    The difference arises because the array of particles does not have a reference particle, and in this case
+    the first particle is used as a reference.
 
     :param filename: path to file, filename.ast or filename.npz
-    :param ref_index: index of ref particle
     :return: ParticleArray
     """
     name, file_extension = os.path.splitext(filename)
     if file_extension == ".npz":
         save_particle_array2npz(filename, p_array)
     elif file_extension == ".ast":
-        particleArray2astraBeam(p_array, filename, ref_index)
+        particleArray2astraBeam(p_array, filename)
+    elif file_extension == ".fmt1":
+        particleArray2csrtrackBeam(p_array, filename)
     else:
-        raise Exception("Unknown format of the beam file: " + file_extension + " but must be *.ast or *.npz")
-
+        raise Exception("Unknown format of the beam file: " + file_extension + " but must be *.ast, *.fmt1 or *.npz")
 
 
 def find_drifts(lat):
@@ -106,11 +121,13 @@ def create_var_name(objects):
                 name = ids[i]
                 name = name.replace('.', '_')
                 name = name.replace(':', '_')
+                name = name.replace('-', '_')
                 ids[i] = name + alphabet[n]
         else:
             name = ids[j]
             name = name.replace('.', '_')
             name = name.replace(':', '_')
+            name = name.replace('-', '_')
             ids[j] = name
         obj.name = ids[j].lower()
 
@@ -155,7 +172,7 @@ def get_elements(lattice):
     for element in lattice.sequence:
         element_type = element.__class__.__name__
         
-        if element_type == 'Edge':
+        if element_type in ('Edge', "CouplerKick"):
             continue
 
         if element not in elements:
@@ -166,15 +183,46 @@ def get_elements(lattice):
     return elements
 
 
+def matrix_def_string(element, params):
+    for key in element.__dict__:
+        if isinstance(element.__dict__[key], np.ndarray):
+            # r - elements
+            if np.shape(element.__dict__[key]) == (6, 6):
+                for i in range(6):
+                    for j in range(6):
+                        val = element.__dict__[key][i, j]
+                        if np.abs(val) > 1e-9:
+                            params.append(key + str(i + 1) + str(j + 1) + '=' + str(val))
+            # t - elements
+            elif np.shape(element.__dict__[key]) == (6, 6, 6):
+                for i in range(6):
+                    for j in range(6):
+                        for k in range(6):
+                            val = element.__dict__[key][i, j, k]
+                            if np.abs(val) > 1e-9:
+                                params.append(key + str(i + 1) + str(j + 1) + str(k + 1) + '=' + str(val))
+            # b - elements
+            if np.shape(element.__dict__[key]) == (6, 1):
+                for i in range(6):
+                    val = element.__dict__[key][i, 0]
+                    if np.abs(val) > 1e-9:
+                        params.append(key + str(i + 1) + '=' + str(val))
+
+    return params
+
 def element_def_string(element):
+
+    #if element.__class__ == Matrix:
+    #    return matrix_def_string(element)
 
     params = []
 
     element_type = element.__class__.__name__
     element_ref = getattr(sys.modules[__name__], element_type)()
     params_order = element_ref.__init__.__code__.co_varnames
+    argcount = element_ref.__init__.__code__.co_argcount
 
-    for param in params_order:
+    for param in params_order[:argcount]:
         if param == 'self':
             continue
         
@@ -189,7 +237,7 @@ def element_def_string(element):
                 params.append(param + '=' + np.array2string(element.__dict__[param], separator=', '))
             continue
 
-        if isinstance(element.__dict__[param], (int, float)):
+        if isinstance(element.__dict__[param], (int, float, complex)):
 
             # fix for parameters 'e1' and 'e2' in RBend element
             if element_type == 'RBend' and param in ('e1', 'e2'):
@@ -208,9 +256,30 @@ def element_def_string(element):
                 params.append(param + '=\'' + element.__dict__[param] + '\'')
             continue
 
-    # join all paramaters to element defenition
-    string = element.name + ' = ' + element_type + '(' + ', '.join(params) + ')\n'
+    if element.__class__ is Matrix:
+        params = matrix_def_string(element, params)
 
+    # join all parameters to element definition
+    string = pprinting(element, element_type, params)
+    return string
+
+
+def pprinting(element, element_type, params):
+    string = element.name + ' = ' + element_type + '('
+    n0 = len(string)
+    n = n0
+    for i, param in enumerate(params):
+        n += len(params)
+        if n > 250:
+            string += "\n"
+            string += " " * n0 + param + ", "
+            n = n0 + len(param) + 2
+        else:
+            if i == len(params) - 1:
+                string += param
+            else:
+                string += param + ", "
+    string += ")\n"
     return string
 
 
@@ -234,6 +303,7 @@ def print_elements(elements_dict):
     elements_order.append('Monitor')
     elements_order.append('Marker')
     elements_order.append('Matrix')
+    elements_order.append('Aperture')
 
     lines = []
     ordered_dict = {}
@@ -269,7 +339,6 @@ def print_elements(elements_dict):
     # delete new line symbol from the first line
     if lines != []:
         lines[0] = lines[0][1:]
-
     return lines
 
 
@@ -301,7 +370,7 @@ def cell2input(lattice, split=False):
     lines = []
     names = []
     for elem in lattice.sequence:
-        if elem.__class__ != Edge:
+        if elem.__class__ not in (Edge, CouplerKick):
             names.append(elem.name)
 
     new_names = []

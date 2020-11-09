@@ -4,9 +4,18 @@ import numpy as np
 from scipy.integrate import odeint
 from scipy import optimize
 from ocelot.common.globals import m_e_GeV, m_e_eV, speed_of_light
-from copy import copy
 from numpy.linalg import norm
+from ocelot.common.ocelog import *
 
+_logger = logging.getLogger(__name__)
+
+try:
+    import numba as nb
+    nb_flag = True
+except:
+    _logger.info("high_order.py: module NUMBA is not installed. Install it to speed up calculation")
+    nb_flag = False
+    
 __MAD__ = True
 
 """
@@ -81,14 +90,13 @@ I346 = Gy * dx*sy = h/kx2*(I34 - I314)
 
 def t_nnn_transport(L, h, k1, k2, energy=0):
     """
+    here is used the following set of variables:
+    x, dx/ds, y, dy/ds, delta_l, dp/p0
     :param L:
     :param angle:
     :param k1:
     :param k2:
     :return:
-
-    here is used the following set of variables:
-    x, dx/ds, y, dy/ds, delta_l, dp/p0
     """
 
     igamma2 = 0.
@@ -348,7 +356,6 @@ def t_nnn_transport(L, h, k1, k2, energy=0):
     T[3, 2, 5] = t436 - h*dx*cy_1
     T[3, 3, 5] = t446 - h*dx*sy_1
 
-    #print "I414=", I414, "  I423 = ", I423,  "   t446 = ", t446, "add = ",h*dx*sy_1, "L = ", L, kx, ky
     """
     Path length difference
     linear = cx*h*x0 + h*sx*x0' + dx*h*dp;
@@ -447,14 +454,16 @@ def t_nnn_transport(L, h, k1, k2, energy=0):
 
 def t_nnn_mad(L, h, k1, k2, energy=0):
     """
-    :param L:
-    :param angle:
-    :param k1:
-    :param k2:
-    :return:
+    Universal function to return second order matrix.
+    Here are used the following set of variables: x, px/p0, y, py/p0, tau, dE/(p0c).
+    See https://nbviewer.jupyter.org/github/ocelot-collab/ocelot/blob/master/demos/ipython_tutorials/2_tracking.ipynb
 
-    here is used the following set of variables:
-    x, dx/ds, y, dy/ds, delta_l, dp/p0
+    :param L: length in [m]
+    :param h: curvature (1/r) of the bend in [1/m]
+    :param k1: strength of quadrupole component in [1/m^2],
+    :param k2: strength of sextupole component in [1/m^3],
+    :param energy: energy in [GeV]
+    :return: second order matrix, numpy array with shape = (6, 6, 6)
     """
 
     igamma2 = 0.
@@ -606,6 +615,7 @@ def t_nnn_mad(L, h, k1, k2, energy=0):
     T[4, 3, 3] = -T544
     return T
 
+
 def t_nnn(L, h, k1, k2, energy=0):
     if __MAD__:
         T = t_nnn_mad(L, h, k1, k2, energy)
@@ -613,8 +623,21 @@ def t_nnn(L, h, k1, k2, energy=0):
         T = t_nnn_transport(L, h, k1, k2, energy)
     return T
 
-def fringe_ent(h, k1, e, h_pole=0., gap=0., fint=0.):
 
+def fringe_ent(h, k1, e, h_pole=0., gap=0., fint=0.):
+    """
+    Calculate first and second order matrices for edge focusing element.
+    Note: the first order (R) is shown here in the sake of completeness but it is duplicated
+            in r_matrix.py module and used from there in optics.py
+
+    :param h: curvature (1/r) of the bend in [1/m]
+    :param k1: strength of quadrupole component of the dipole in [1/m^2],
+    :param e: the angle of inclination of the entrance face [rad],
+    :param h_pole: the curvature (1/r) of the entrance face
+    :param gap: the magnet gap [m], NOTE in MAD and ELEGANT: HGAP = gap/2
+    :param fint: fringe field integral
+    :return: R, T. First and second order matrices (6, 6), (6, 6, 6)
+    """
     sec_e = 1./np.cos(e)
     sec_e2 = sec_e*sec_e
     sec_e3 = sec_e2*sec_e
@@ -624,7 +647,6 @@ def fringe_ent(h, k1, e, h_pole=0., gap=0., fint=0.):
     R = np.eye(6)
     R[1, 0] = h*tan_e
     R[3, 2] = -h*np.tan(e - phi)
-    #print R
 
     T = np.zeros((6,6,6))
     T[0, 0, 0] = -h/2.*tan_e2
@@ -646,8 +668,21 @@ def fringe_ent(h, k1, e, h_pole=0., gap=0., fint=0.):
         T[3, 2, 5] = 0
     return R, T
 
-def fringe_ext(h, k1, e, h_pole=0., gap=0., fint=0.):
 
+def fringe_ext(h, k1, e, h_pole=0., gap=0., fint=0.):
+    """
+    Calculate first and second order matrices for edge focusing element.
+    Note: the first order (R) is shown here in the sake of completeness but it is duplicated
+            in r_matrix.py module and used from there in optics.py
+
+    :param h: curvature (1/r) of the bend in [1/m]
+    :param k1: strength of quadrupole component of the dipole in [1/m^2],
+    :param e: the angle of inclination of the exit face [rad],
+    :param h_pole: the curvature (1/r) of the exit face
+    :param gap: the magnet gap [m], NOTE in MAD and ELEGANT: HGAP = gap/2
+    :param fint: fringe field integral
+    :return: R, T. First and second order matrices (6, 6), (6, 6, 6)
+    """
     sec_e = 1./np.cos(e)
     sec_e2 = sec_e*sec_e
     sec_e3 = sec_e2*sec_e
@@ -660,7 +695,6 @@ def fringe_ext(h, k1, e, h_pole=0., gap=0., fint=0.):
 
     R[1, 0] = h*tan_e
     R[3, 2] = -h*np.tan(e - phi)
-    #print R
 
     T = np.zeros((6,6,6))
     T[0, 0, 0] = h/2.*tan_e2
@@ -681,6 +715,7 @@ def fringe_ext(h, k1, e, h_pole=0., gap=0., fint=0.):
         T[1, 0, 5] = 0
         T[3, 2, 5] = 0
     return R, T
+
 
 def H23(vec_x, h, k1, k2, beta=1., g_inv=0.):
     """
@@ -882,7 +917,7 @@ def sym_map(z, X, h, k1, k2, energy=0.):
 """
 
 
-def moments(bx, by, Bx, By, Bz, dzk):
+def moments_py(bx, by, Bx, By, Bz, dzk):
     """
     mx = v/(dz/dt)*e/p*(y'*Bz - By*(1.+x'^2) + x'*y'*Bx)*dz
     my = -v/(dz/dt)*e/p*(x'*Bz - Bx*(1.+y'^2) + x'*y'*By)*dz
@@ -902,6 +937,8 @@ def moments(bx, by, Bx, By, Bz, dzk):
     mx = k*(by*Bz - By*(1.+bx2) + bxy*Bx)
     my = -k*(bx*Bz - Bx*(1.+by2) + bxy*By)
     return mx, my
+
+moments = moments_py if not nb_flag else nb.jit(moments_py)
 
 
 def rk_track_in_field(y0, s_stop, N, energy, mag_field, s_start=0.):

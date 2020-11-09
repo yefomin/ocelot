@@ -2,6 +2,7 @@
 @author: Igor Zagorodnov @ Martin Dohlus
 Created on 27.03.2015
 Revision on 01.06.2017: coordinate transform to the velocity direction
+2019: Added LSC: S. Tomin and I. Zagorodnov
 """
 
 import scipy.ndimage as ndimage
@@ -14,7 +15,13 @@ from scipy.special import exp1, k1
 from ocelot.cpbd.physics_proc import PhysProc
 from ocelot.common.math_op import conj_sym
 from ocelot.cpbd.beam import s_to_cur
+from ocelot.common import conf
 import logging
+
+try:
+    from scipy.special import factorial
+except:
+    from scipy.misc import factorial    # legacy support
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +100,7 @@ class SpaceCharge(PhysProc):
         self.random_seed = 10     # random seeding number. if None seeding is random
 
     def prepare(self, lat):
-        if self.random_seed != None:
+        if self.random_seed is not None:
             np.random.seed(self.random_seed)
 
     def sym_kernel(self, ijk2, hxyz):
@@ -139,14 +146,17 @@ class SpaceCharge(PhysProc):
         K2[Nx:2*Nx-1, :, :] = K2[Nx-1:0:-1, :, :]             #x-mirror
         t0 = time.time()
         if pyfftw_flag:
-            nthread = multiprocessing.cpu_count()
+            nthreads = int(conf.OCELOT_NUM_THREADS)
+            if nthreads < 1:
+                nthreads = 1
             K2_fft = pyfftw.builders.fftn(K2, axes=None, overwrite_input=False, planner_effort='FFTW_ESTIMATE',
-                                       threads=nthread, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
+                                       threads=nthreads, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
             out_fft = pyfftw.builders.fftn(out, axes=None, overwrite_input=False, planner_effort='FFTW_ESTIMATE',
-                                          threads=nthread, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
+                                          threads=nthreads, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
             out_ifft = pyfftw.builders.ifftn(out_fft()*K2_fft(), axes=None, overwrite_input=False, planner_effort='FFTW_ESTIMATE',
-                                          threads=nthread, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
+                                          threads=nthreads, auto_align_input=False, auto_contiguous=False, avoid_copy=True)
             out = np.real(out_ifft())
+
         else:
             out = np.real(ifftn(fftn(out)*fftn(K2)))
         t1 = time.time()
@@ -156,38 +166,39 @@ class SpaceCharge(PhysProc):
 
     def el_field(self, X, Q, gamma, nxyz):
         N = X.shape[0]
-        X[:, 2] = X[:, 2]*gamma
-        X_min = np.amin(X, axis=0)
-        XX = np.amax(X, axis=0) - X_min
+        X[:, 2] = X[:, 2] * gamma
+        XX = np.max(X, axis=0) - np.min(X, axis=0)
         if self.random_mesh:
-            XX = XX*np.random.uniform(low=1, high=1.1)
+            XX = XX * np.random.uniform(low=1, high=1.1)
         logger.debug('mesh steps:' + str(XX))
         # here we use a fast 3D "near-point" interpolation
-        # we need a stand-alone module with 1D, 2D, 3D particles-to-grid functions
-        steps = XX/(nxyz-3)
-        X = X/steps
-        X_min = X_min/steps
-        X_mid = np.dot(Q, X)/np.sum(Q)
+        # we need a stand-alone module with 1D,2D,3D parricles-to-grid functions
+        steps = XX / (nxyz - 3)
+        X = X / steps
+        X_min = np.min(X, axis=0)
+        X_mid = np.dot(Q, X) / np.sum(Q)
         X_off = np.floor(X_min - X_mid) + X_mid
+        if self.random_mesh:
+            X_off = X_off + np.random.uniform(low=-0.5, high=0.5)
         X = X - X_off
         nx = nxyz[0]
         ny = nxyz[1]
         nz = nxyz[2]
-        nzny = nz*ny
-        Xi = np.int_(np.floor(X)+1)
-        inds = np.int_(Xi[:, 0]*nzny + Xi[:, 1]*nz + Xi[:, 2])  # 3d -> 1d
-        q = np.bincount(inds, Q, nzny*nx).reshape(nxyz)
+        nzny = nz * ny
+        Xi = np.int_(np.floor(X) + 1)
+        inds = np.int_(Xi[:, 0] * nzny + Xi[:, 1] * nz + Xi[:, 2])  # 3d -> 1d
+        q = np.bincount(inds, Q, nzny * nx).reshape(nxyz)
         p = self.potential(q, steps)
         Ex = np.zeros(p.shape)
         Ey = np.zeros(p.shape)
         Ez = np.zeros(p.shape)
-        Ex[:nx-1, :, :] = (p[:nx-1, :, :] - p[1:nx, :, :])/steps[0]
-        Ey[:, :ny-1, :] = (p[:, :ny-1, :] - p[:, 1:ny, :])/steps[1]
-        Ez[:, :, :nz-1] = (p[:, :, :nz-1] - p[:, :, 1:nz])/steps[2]
+        Ex[:nx - 1, :, :] = (p[:nx - 1, :, :] - p[1:nx, :, :]) / steps[0]
+        Ey[:, :ny - 1, :] = (p[:, :ny - 1, :] - p[:, 1:ny, :]) / steps[1]
+        Ez[:, :, :nz - 1] = (p[:, :, :nz - 1] - p[:, :, 1:nz]) / steps[2]
         Exyz = np.zeros((N, 3))
-        Exyz[:, 0] = ndimage.map_coordinates(Ex, np.c_[X[:, 0], X[:, 1]+0.5, X[:, 2]+0.5].T, order=1)*gamma
-        Exyz[:, 1] = ndimage.map_coordinates(Ey, np.c_[X[:, 0]+0.5, X[:, 1], X[:, 2]+0.5].T, order=1)*gamma
-        Exyz[:, 2] = ndimage.map_coordinates(Ez, np.c_[X[:, 0]+0.5, X[:, 1]+0.5, X[:, 2]].T, order=1)
+        Exyz[:, 0] = ndimage.map_coordinates(Ex, np.c_[X[:, 0], X[:, 1] + 0.5, X[:, 2] + 0.5].T, order=1) * gamma
+        Exyz[:, 1] = ndimage.map_coordinates(Ey, np.c_[X[:, 0] + 0.5, X[:, 1], X[:, 2] + 0.5].T, order=1) * gamma
+        Exyz[:, 2] = ndimage.map_coordinates(Ez, np.c_[X[:, 0] + 0.5, X[:, 1] + 0.5, X[:, 2]].T, order=1)
         return Exyz
 
 
@@ -238,6 +249,10 @@ class SpaceCharge(PhysProc):
 
 
 class LSC(PhysProc):
+    """
+    Longitudinal Space Charge
+    smooth_param - 0.1 smoothing parameter, resolution = np.std(p_array.tau())*smooth_param
+    """
     def __init__(self, step=1):
         PhysProc.__init__(self, step)
         self.smooth_param = 0.1
@@ -250,15 +265,25 @@ class LSC(PhysProc):
         sigma - transverse RMS size of the beam
         w - omega = 2*pi*f
         """
-        indx = np.where(w < 1e-7)[0]
-        w[indx] = 1e-7
+        eps = 1e-16
+        ass = 40.0
+
         alpha = w * sigma / (gamma * speed_of_light)
         alpha2 = alpha * alpha
-        ksi = np.exp(alpha2 + np.log(exp1(alpha2)) - 2*np.log(gamma))
-        Z = 1j*Z0 / (4 * pi * speed_of_light) * w * ksi * dz
 
-        Z[indx] = 0
-        return Z * 1e-12  # --> V/pC
+        inda = np.where(alpha2 > ass)[0]
+        ind = np.where((alpha2 <= ass) & (alpha2 >= eps))[0]
+
+        T = np.zeros(w.shape)
+        T[ind] = np.exp(alpha2[ind]) *exp1(alpha2[ind])
+
+        x= alpha2[inda]
+        k = 0
+        for i in range(10):
+            k += (-1) ** i * factorial(i) / (x ** (i + 1))
+        T[inda] = k
+        Z = 1j * Z0 / (4 * pi * speed_of_light*gamma**2) * w * T * dz
+        return Z # --> Omm/m
 
     def imp_step_lsc(self, gamma, rb, w, dz):
         """
@@ -273,7 +298,7 @@ class LSC(PhysProc):
         x = w*rb/(speed_of_light*gamma)
         Z = 1j*Z0 * speed_of_light / (4 * w * rb*rb) * dz * (1 - x*k1(x))
         Z[indx] = 0
-        return Z * 1e-12  # --> V/pC
+        return Z # --> Omm/m
 
     def wake2impedance(self, s, w):
         """
@@ -347,8 +372,8 @@ class LSC(PhysProc):
         logger.debug(" LSC applied, dz =" + str(dz))
         mean_b = np.mean(p_array.tau())
         sigma_tau = np.std(p_array.tau())
-        slice_min = mean_b - sigma_tau / 10
-        slice_max = mean_b + sigma_tau / 10
+        slice_min = mean_b - sigma_tau / 2.5
+        slice_max = mean_b + sigma_tau / 2.5
         indx = np.where(np.logical_and(np.greater_equal(p_array.tau(), slice_min), np.less(p_array.tau(), slice_max)))
 
         if self.step_profile:
@@ -356,7 +381,8 @@ class LSC(PhysProc):
                      np.max(p_array.y()[indx]) - np.min(p_array.y()[indx]))/2
             sigma = rb
         else:
-            sigma = min(np.std(p_array.x()[indx]), np.std(p_array.y()[indx]))
+            sigma = (np.std(p_array.x()[indx]) + np.std(p_array.y()[indx]))/2.
+            # sigma = min(np.std(p_array.x()[indx]), np.std(p_array.y()[indx]))
         q = np.sum(p_array.q_array)
         gamma = p_array.E / m_e_GeV
         v = np.sqrt(1 - 1 / gamma ** 2) * speed_of_light
@@ -364,7 +390,7 @@ class LSC(PhysProc):
         bunch = B[:, 1] / (q * speed_of_light)
         x = B[:, 0]
 
-        W = - self.wake_lsc(x, bunch, gamma, sigma, dz) * 1e12 * q
+        W = - self.wake_lsc(x, bunch, gamma, sigma, dz) * q
 
         indx = np.argsort(p_array.tau(), kind="quicksort")
         tau_sort = p_array.tau()[indx]

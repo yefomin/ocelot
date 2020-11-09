@@ -2,21 +2,24 @@
 Section class for s2e tracking.
 S.Tomin. XFEL/DESY. 2017
 """
-from ocelot import *
-from ocelot.adaptors.astra2ocelot import *
-import numpy as np
+import os
 import copy
+import numpy as np
 
-#data_dir = "N:/4all/xxl/zagor/mpy_xxl"
-data_dir = "/Users/zagor"
-data_dir = "/Users/tomins/ownCloud/DESY/repository/forSergey"
-#data_dir = "/Volumes/Promise RAID/UserFolders/zagor_xxl"
+from ocelot.cpbd.optics import *
+from ocelot.cpbd.physics_proc import *
+from ocelot.cpbd.sc import *
+from ocelot.cpbd.csr import *
+from ocelot.cpbd.wake3D import *
+from ocelot.cpbd.track import *
+from ocelot.cpbd.io import *
+
 
 class SectionLattice:
     """
     High level class to work with SectionTrack()
     """
-    def __init__(self, sequence, tws0=None, data_dir="."):
+    def __init__(self, sequence, tws0=None, data_dir=".", *args, **kwargs):
         """
 
         :param sequence: list of SectionTrack()
@@ -24,15 +27,17 @@ class SectionLattice:
         self.sec_seq = sequence
         self.elem_seq = None
         self.tws = None
+        self.tws0 = tws0
+        self.tws_track = None
+        self.tws_current = None
         self.data_dir = data_dir
-        self.initialize(tws0=tws0)
+        self.initialize(*args, **kwargs)
 
-    def initialize(self, tws0=None):
-        self.init_sections()
-        self.tws = self.calculate_twiss(tws0)
+    def initialize(self, *args, **kwargs):
+        self.init_sections(*args, **kwargs)
+        self.tws = self.calculate_twiss(self.tws0)
 
-
-    def init_sections(self):
+    def init_sections(self, *args, **kwargs):
         """
         Method initiates section and return dictionary with initialized sections
 
@@ -41,9 +46,10 @@ class SectionLattice:
         self.dict_sections = {}
         self.elem_seq = []
         for sec in self.sec_seq:
-            s = sec(self.data_dir)
-            #s.data_dir = self.data_dir
-            #s.update()
+            s = sec(self.data_dir, *args, **kwargs)
+            if "coupler_kick" in kwargs and kwargs["coupler_kick"] is False:
+                s.remove_coupler_kicks()
+
             self.dict_sections[sec] = s
             self.elem_seq.append(s.lattice.sequence)
         return self.dict_sections
@@ -60,28 +66,34 @@ class SectionLattice:
         for sec in self.sec_seq:
             s = self.dict_sections[sec]
             s.tws0 = tws0
-            if s.tws0 != None:
+            if s.tws0 is not None:
                 tws = twiss(s.lattice, tws0)
                 tws0 = tws[-1]
                 tws_whole = np.append(tws_whole, tws)
         return tws_whole
 
-    def update_sections(self, sections, config=None):
-        #blank_sections = sections.sections
-        #sections = []
+    def update_sections(self, sections, config=None, coupler_kick=False):
+
         new_sections = []
+        tws0 = self.dict_sections[sections[0]].tws0
+        tws_whole = []
         for sec in sections:
+            #np.random.seed(10)
             sec = self.dict_sections[sec]
-            #sec = blank_sec()
-            #sections.append(sec)
-            if config != None and sec.__class__ in config.keys():
+            if not coupler_kick:
+                sec.remove_coupler_kicks()
+
+            if config is not None and sec.__class__ in config.keys():
                 conf = config[sec.__class__]
                 if "rho" in conf.keys():
                     sec.update_bunch_compressor(rho=conf["rho"])
                 if "phi" in conf.keys() and "v" in conf.keys():
                     sec.update_cavity(phi=conf["phi"], v=conf["v"])
-                if "match" in conf.keys() and conf["match"] == True:
-                    sec.apply_matching()
+                if "match" in conf.keys() and conf["match"] is True:
+                    if "bounds" in conf.keys():
+                        sec.apply_matching(bounds=conf["bounds"])
+                    else:
+                        sec.apply_matching(bounds=[-5, 5])
                 if "SC" in conf.keys():
                     sec.sc_flag = conf["SC"]
                 if "CSR" in conf.keys():
@@ -90,18 +102,34 @@ class SectionLattice:
                     sec.smooth_flag = conf["smooth"]
                 if "wake" in conf.keys():
                     sec.wake_flag = conf["wake"]
+
+                if "tds.phi" in conf.keys() and "tds.v" in conf.keys():
+                    sec.update_tds(phi=conf["tds.phi"], v=conf["tds.v"])
+
+            sec.lattice.update_transfer_maps()
             new_sections.append(sec)
+            if tws0 is not None:
+                tws = twiss(sec.lattice, tws0)
+                tws0 = tws[-1]
+                tws_whole = np.append(tws_whole, tws)
+        self.tws_current = tws_whole
         return new_sections
 
-    def track_sections(self, sections, p_array, config=None, force_ext_p_array=False):
-        self.update_sections(sections, config=config)
-        #twis_track = []
+    def track_sections(self, sections, p_array, config=None, force_ext_p_array=False, coupler_kick=False, verbose=True):
+        self.tws_track = []
+        L = 0.
+        self.update_sections(sections, config=config, coupler_kick=coupler_kick)
         for i, sec in enumerate(sections):
             sec = self.dict_sections[sec]
             if i == 0 and sec.__class__ != self.sec_seq[0] and not force_ext_p_array:
                 p_array = None
+            sec.print_progress = verbose
             p_array = sec.tracking(particles=p_array)
-            #twis_track.append(sec.load_twiss_file())
+            tws_track = copy.deepcopy(sec.tws_track)
+            for tws in tws_track:
+                tws.s += L
+            L = tws_track[-1].s
+            self.tws_track = np.append(self.tws_track, tws_track)
         return p_array
 
     def load_twiss_track(self, sections):
@@ -109,7 +137,6 @@ class SectionLattice:
         bx = []
         by = []
         s0 = 0
-        #tws_list = []
         for i, sec in enumerate(sections):
             sec = self.dict_sections[sec]
             tws = sec.load_twiss_file()
@@ -123,7 +150,7 @@ class SectionLattice:
 
 
 class SectionTrack:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, *args, **kwargs):
 
         self.lattice_name = ""
         self.lattice = None
@@ -138,6 +165,7 @@ class SectionTrack:
         self.input_beam_file = None
         self.output_beam_file = None
         self.tws_file = None
+
         #self.data_dir = "."
         self.particle_dir = data_dir + "/particles/"
         self.tws_dir = data_dir + "/tws/"
@@ -145,8 +173,6 @@ class SectionTrack:
         self.physics_processes_array = []  # list of physics process
         self.method = MethodTM()
         self.method.global_method = SecondTM
-        self.translator = {SpaceCharge: "sc_flag", CSR: "csr_flag",
-                           Wake: "wake_flag", BeamTransform:"bt_flag", SmoothBeam: "smooth_flag"}
         self.sc_flag = True
         self.csr_flag = True
         self.wake_flag = True
@@ -156,25 +182,37 @@ class SectionTrack:
         self.print_progress = True
         self.calc_tws = True
         self.kill_track = False
-        #self.update()
 
-    #def update(self):
-    #    self.particle_dir = self.data_dir + "/particles/"
-    #    self.tws_dir = self.data_dir + "/tws/"
+    def remove_coupler_kicks(self):
+        print("REMOVE Coupler kick")
+        for e in self.lattice.sequence:
+            if e.__class__ == Cavity:
+                e.vx_up = 0
+                e.vy_up = 0
+                e.vxx_up = 0
+                e.vxy_up = 0
+                e.vx_down = 0
+                e.vy_down = 0
+                e.vxx_down = 0
+                e.vxy_down = 0
+        self.lattice.update_transfer_maps()
 
-    def apply_matching(self):
-        if self.tws0 == None:
+    def apply_matching(self, bounds=None):
+
+        if bounds is None:
+            bounds = [-5, 5]
+
+        if self.tws0 is None:
             print("TWISS is not defined")
             return
+
         self.tws0.mux = 0
         self.tws0.muy = 0
         bt = BeamTransform(tws=self.tws0)
-        bt.bounds = [-0.5, 0.5]
+        bt.bounds = bounds
         self.add_physics_process(bt, self.lattice.sequence[0], self.lattice.sequence[0])
 
-
     def bc_analysis(self):
-        #print("BC analysis")
         # find positions
         L = 0.
         for elem in self.lattice.sequence:
@@ -234,13 +272,22 @@ class SectionTrack:
         if self.dipoles is None:
             print(self.__class__.__name__ + " No BC")
             return
+
         self.bc_analysis()
-        if self.dipole_len == None:
+
+        if self.dipole_len is None:
             self.dipole_len = copy.copy(self.dipoles[0].l)
-        angle = np.arcsin(self.dipole_len / rho)
-        ds = angle * rho
-        if self.bc_gap == None:
+
+        if rho == 0:
+            angle = 0
+            ds = self.dipole_len
+        else:
+            angle = np.arcsin(self.dipole_len / rho)
+            ds = angle * rho
+
+        if self.bc_gap is None:
             self.bc_gap = self.bc_gap_left*np.cos(self.dipoles[0].angle)
+
         drift = self.bc_gap / np.cos(angle)
         self.change_bc_shoulders(drift)
         # d.l=drift
@@ -252,23 +299,32 @@ class SectionTrack:
             else:
                 dip.e1 = angle * np.sign(dip.angle)
         self.lattice.update_transfer_maps()
-        #for elem in self.lattice.sequence:
-        #    print(elem.id, elem.l)
-
 
     def update_cavity(self, phi, v):
         for elem in self.lattice.sequence:
+
             if elem.__class__ == Cavity:
-                if self.cav_name_pref == None:
+                if self.cav_name_pref is None:
                     elem.v = v
                     elem.phi = phi
                 else:
                     if self.cav_name_pref in elem.id:
                         elem.v = v
                         elem.phi = phi
-
         self.lattice.update_transfer_maps()
 
+    def update_tds(self, phi, v):
+        for elem in self.lattice.sequence:
+
+            if elem.__class__ == TDCavity:
+                if self.cav_name_pref is None:
+                    elem.v = v
+                    elem.phi = phi
+                else:
+                    if self.cav_name_pref in elem.id:
+                        elem.v = v
+                        elem.phi = phi
+        self.lattice.update_transfer_maps()
 
     def init_navigator(self):
 
@@ -294,7 +350,6 @@ class SectionTrack:
                 self.navigator.add_physics_proc(physics_process[0], physics_process[1], physics_process[2])
 
             if physics_process[0].__class__ not in [SpaceCharge, CSR, Wake, WakeKick, BeamTransform, SmoothBeam, LSC]:
-                #print(physics_process, " ADDED")
                 self.navigator.add_physics_proc(physics_process[0], physics_process[1], physics_process[2])
 
     def add_physics_process(self, physics_process, start, stop):
@@ -312,7 +367,7 @@ class SectionTrack:
             try:
                 particles = astraBeam2particleArray(filename=self.input_beam_file)
             except:
-                print(self.lattice_name + ' - #### ERROR #### - NO START PARTICLES FILE.')
+                print(self.lattice_name + ' - #### ERROR #### - NO START PARTICLES FILE: ' + self.input_beam_file)
         
         else:
             
@@ -320,19 +375,29 @@ class SectionTrack:
                 particles = load_particle_array(self.input_beam_file)
         
             except:
-                print(self.lattice_name + ' - #### ERROR #### - NO START PARTICLES FILE.')
+                print(self.lattice_name + ' - #### ERROR #### - NO START PARTICLES FILE: ' + self.input_beam_file)
 
         return particles
 
-    def save_beam_file(self, particles):
+    def folder_check_create(self, filename):
+        # path to directory
+        dir_path = os.path.dirname(os.path.abspath(filename))
+        # check if exist
+        if not os.path.exists(dir_path):
+            # create
+            os.makedirs(dir_path)
 
+    def save_beam_file(self, particles):
+        self.folder_check_create(self.output_beam_file)
         save_particle_array(self.output_beam_file, particles)
 
     def save_twiss_file(self, twiss_list):
-        if self.tws_file == None:
+        if self.tws_file is None:
             tws_file_name = self.output_beam_file.replace("particles", "tws")
         else:
             tws_file_name = self.tws_file
+
+        self.folder_check_create(tws_file_name)
 
         bx = np.array([tw.beta_x for tw in twiss_list])
         by = np.array([tw.beta_y for tw in twiss_list])
@@ -348,19 +413,31 @@ class SectionTrack:
                             emit_x=emit_x, emit_y=emit_y)
 
     def load_twiss_file(self):
-
-        #with np.load(self.tws_file) as data:
-        #    #for key in data.keys():
-        #    #    p_array.__dict__[key] = data[key]
         return np.load(self.tws_file)
+
+    def get_tws_list(self):
+        tws_dict = {}
+        n = 0
+        with np.load(self.tws_file) as data:
+            for key in data:
+                tws_dict[key] = data[key]
+                n = len(data[key])
+        tws_list = []
+        for i in range(n):
+            tws = Twiss()
+            for key in tws_dict:
+                tws.__dict__[key] = tws_dict[key][i]
+
+            tws_list.append(tws)
+
+        return tws_list
 
     def tracking(self, particles=None):
 
         # read beam file
-        if particles == None:
+        if particles is None:
             particles = self.read_beam_file()
-            #print("Particle.s", particles.s, particles.q_array)
-            if particles == None:
+            if particles is None:
                 return None
 
         # init navigator
@@ -369,12 +446,12 @@ class SectionTrack:
         # tracking
         print()
         print(self.lattice_name + ' TRACKING')
-        print("std1 = ", np.std(particles.tau()))
+        # print("std1 = ", np.std(particles.tau()))
         tws_track, particles = track(self.lattice, particles, self.navigator,
                                      print_progress=self.print_progress, calc_tws=self.calc_tws)
         self.tws_track = tws_track
         # save tracking results
-        if self.output_beam_file != None and not self.kill_track:
+        if self.output_beam_file is not None and not self.kill_track:
             self.save_beam_file(particles)
             self.save_twiss_file(tws_track)
 

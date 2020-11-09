@@ -1,6 +1,5 @@
 __author__ = 'Sergey Tomin'
 import matplotlib
-matplotlib.use('TkAgg')
 from ocelot import *
 from ocelot.gui import *
 from ocelot.cpbd.beam import generate_parray
@@ -29,7 +28,7 @@ sigma_y = 0.000165584800564
 sigma_py = 4.00994225888e-05
 
 p_array = generate_parray(sigma_x=sigma_x, sigma_px=sigma_px, sigma_y=None, sigma_py=None,
-                    sigma_tau=1.30190131e-04, sigma_p=3.09815718e-04, tau_p_cor=0.002, charge=0.5e-9,
+                    sigma_tau=1.30190131e-04, sigma_p=3.09815718e-04, chirp=0.002, charge=0.5e-9,
                           nparticles=200000, energy=0.13)
 
 

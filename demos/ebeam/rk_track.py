@@ -1,7 +1,5 @@
 __author__ = 'Sergey Tomin'
 
-import matplotlib
-matplotlib.use('TkAgg')
 from ocelot import *
 from ocelot.rad.undulator_params import *
 from ocelot.cpbd.beam import generate_parray
@@ -27,7 +25,7 @@ lat = MagneticLattice(cell, method=method)
 np.random.seed(33)
 
 p_array = generate_parray(sigma_x=0, sigma_px=0, sigma_y=None, sigma_py=None,
-                    sigma_tau=100e-6/2.36, sigma_p=0, tau_p_cor=0.01/2.36, charge=0.5e-9, nparticles=10000, energy=0.6)
+                    sigma_tau=100e-6/2.36, sigma_p=0, chirp=0.01/2.36, charge=0.5e-9, nparticles=10000, energy=0.6)
 
 
 p_array_1 = copy.deepcopy(p_array)

@@ -1,5 +1,8 @@
 __author__ = 'Sergey Tomin'
-
+"""
+Screen class for SR module. The first version was written in 2011 - 2012. 
+S.Tomin
+"""
 
 from ctypes import c_double
 import numpy as np
@@ -13,6 +16,24 @@ def Py2C(array):
 
 
 class Screen:
+    """
+    Class to store radiation field and to provide information about screen parameters where radiation will be observed.
+    Format for electric fields in arrays (arReEx, arImEx, ...) is following: ReEx[ny*nx*je + nx*jy + jx]
+
+    self.z: 100.0 [m], distance from the beginning of the lattice to the screen
+    self.size_x: 1 [m], half of screen size in horizontal plane
+    self.size_y: 1 [m], half of screen size in vertical
+    self.nx: 1, number of points in horizontal plane
+    self.ny: 1, number of points in vertical plane
+    self.start_energy: 100.0 [eV], starting photon energy
+    self.end_energy: 10000.0 [eV], ending photon energy
+    self.num_energy: 1000,   number of energy points
+    self.arReEx = [],  Real part of horizontal component of the electric field
+    self.arImEx = [],  Imaginary part of horizontal component of the electric field
+    self.arReEy = [],  Real part of the vertical component of the electric field
+    self.arImEy = [],  Imaginary part of the vertical component of the electric field
+    self.arPhase = [], phase between Re and Im components
+    """
     def __init__(self):
         # position of screen center
         self.x = 0.0   # in [m]
@@ -33,6 +54,16 @@ class Screen:
         # half of angle aperture.  Angle relative to undulator axis for emittance influence on spectrum
         self.theta_x = 0  # rad
         self.theta_y = 0  # rad
+
+        self.arReEx = []     # array, Real part of horizontal component of the electric field
+        self.arImEx = []     # array, Imaginary part of horizontal component of the electric field
+        self.arReEy = []     # array, Real part of the vertical component of the electric field
+        self.arImEy = []     # array, Imaginary part of the vertical component of the electric field
+        self.arPhase = []    # array, phase between Re and Im components
+        self.Xph = []
+        self.Yph = []
+        self.Eph = []
+
         self.update()
 
     def update(self):
@@ -70,18 +101,43 @@ class Screen:
         self.arReEy = self.memory_screen[2*Nscr:3*Nscr]
         self.arImEy = self.memory_screen[3*Nscr:4*Nscr]
         self.arPhase = self.memory_screen[4*Nscr:5*Nscr]
-        self.Xph = np.linspace(self.x_start, self.x_start + self.x_step*(self.nx -1), self.nx)
-        self.Yph = np.linspace(self.y_start, self.y_start + self.y_step*(self.ny -1), self.ny)
-        self.Eph = np.linspace(self.e_start, self.e_start + self.e_step*(self.ne -1), self.ne)
+        self.Xph = np.linspace(self.x_start, self.x_start + self.x_step*(self.nx - 1), self.nx)
+        self.Yph = np.linspace(self.y_start, self.y_start + self.y_step*(self.ny - 1), self.ny)
+        self.Eph = np.linspace(self.e_start, self.e_start + self.e_step*(self.ne - 1), self.ne)
 
+    def rebuild_efields(self, x0=0, y0=0, z0=0):
+        """
+        the method recalculates the field phase and electrical fields to obtain the correct values that can be used
+        to propagate the wave front.
 
-        #class EMScreen():
-        #    def __init__(self, screen=None):
-        #        if screen !=None:
-        #            self.screen_to_emscreen(screen)
-        #        else:
-        #            self.create_empty_emclass()
+        :param x0: initial the electron coordinate
+        :param y0: initial the electron coordinate
+        :param z0: initial the electron coordinate
+        :return:
+        """
+        hc = 1.239841874330e-3  # h_eV_s*speed_of_light*1000  // mm
+        shape_array = [self.ne, self.ny, self.nx]
 
+        Xscr = np.linspace(self.x_start, self.x_start + self.x_step * (self.nx - 1), num=self.nx)
+        Yscr = np.linspace(self.y_start, self.y_start + self.y_step * (self.ny - 1), num=self.ny)
+        Yscr = Yscr.reshape((self.ny, 1))
+        Erad = np.linspace(self.e_start, self.e_start + self.e_step * (self.ne - 1), num=self.ne)
+        Erad = Erad.reshape((self.ne, 1, 1))
+        prXconst = Xscr - x0
+        prYconst = Yscr - y0
+        phaseConstIn = np.pi * Erad / hc * (prXconst * prXconst + prYconst * prYconst) / (self.Distance - z0)
+        phaseConstIn = phaseConstIn.flatten()
+        self.arPhase += phaseConstIn
+        cosf = np.cos(phaseConstIn)
+        sinf = np.sin(phaseConstIn)
+        arReEx = self.arReEx * cosf - self.arImEx * sinf    # sum of cos
+        arImEx = self.arImEx * cosf + self.arReEx * sinf    # sum of sin
+        arReEy = self.arReEy * cosf - self.arImEy * sinf    # sum of cos
+        arImEy = self.arImEy * cosf + self.arReEy * sinf    # sum of sin
+        self.arReEx = arReEx
+        self.arImEx = arImEx
+        self.arReEy = arReEy
+        self.arImEy = arImEy
 
     def screen_to_emscreen(self, screen):
 
